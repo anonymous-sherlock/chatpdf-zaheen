@@ -1,34 +1,53 @@
 import { db } from "@/db";
 import { getKindeServerSession } from "@kinde-oss/kinde-auth-nextjs/server";
 import { createUploadthing, type FileRouter } from "uploadthing/next";
- 
+
 const f = createUploadthing();
- 
 
 export const ourFileRouter = {
-  fileUploader: f({ pdf: { maxFileSize: "4MB" } })
-    .middleware(async ({ req }) => { 
-      const {getUser} = getKindeServerSession()
-        const user=await getUser()
+  pdfUploader: f({ pdf: { maxFileSize: "4MB" } })
+    .middleware(async ({ req }) => {
+      const { getUser } = getKindeServerSession();
+      const user = getUser();
 
-        if(!user || !user.id) throw new Error('Unauthorized')
-
-      return{userId:user.id}
+      if (!user || !user.id) throw new Error("unauthorized");
+      return { userid: user.id };
     })
     .onUploadComplete(async ({ metadata, file }) => {
-      // This code RUNS ON YOUR SERVER after upload
+      const createdFile = await db.files.create({
+        data: {
+          key: file.key,
+          name: file.name,
+          userId: metadata.userid,
+          url: `https://uploadthing-prod.s3.us-west-2.amazonaws.com/${file.key}`,
+          uploadStatus: "PROCESSING",
+        },
+      });
+      try {
+        const response = await fetch(
+          `https://uploadthing-prod.s3.us-west-2.amazonaws.com/${file.key}`
+        );
 
-      const createrFile = await db.files.create({
-        data:{
-          key:file.key,
-          name:file.name,
-          userId:metadata.userId,
-          url:`https://uploadthing-prod.s3.us-west-2.amazonaws.com/${file.key}`,
-          uploadStatus:"PROCESSING"
-        }
-      })
-
+        await db.files.update({
+          data: {
+            uploadStatus: "SUCCESS",
+          },
+          where: {
+            id: createdFile.id,
+          },
+        });
+      } catch (err) {
+        console.log(err);
+        await db.files.update({
+          data: {
+            uploadStatus: "FAILED",
+          },
+          where: {
+            id: createdFile.id,
+          },
+        });
+      }
     }),
 } satisfies FileRouter;
- 
+
 export type OurFileRouter = typeof ourFileRouter;
